@@ -8,6 +8,7 @@ import "google/protobuf/timestamp.proto";
 
 service MasterService {
     rpc ReportTaskResult(ReportTaskResultRequest) returns (ReportTaskResultResponse);
+    rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
 }
 
 enum TaskResultType {
@@ -23,3 +24,18 @@ message ReportTaskResultRequest {
 }
 
 message ReportTaskResultResponse {}
+
+// SubmitTask — принять задачу в очередь мастера.
+// Метаинформация (meta, cluster_meta) намеренно передаётся как map<string,string>:
+// её структура произвольна и будет меняться по мере развития планировщика.
+message SubmitTaskRequest {
+    string type        = 1; // тип задачи, например "python"
+    string input_file  = 2;
+    string output_file = 3;
+    string script      = 4;
+    map<string, string> meta = 5; // произвольная метаинформация по задаче
+}
+
+message SubmitTaskResponse {
+    string task_id = 1;
+}

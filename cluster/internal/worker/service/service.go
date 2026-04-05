@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	workermetrics "github.com/pepelulka/rl-scheduler/internal/worker/metrics"
 	"github.com/pepelulka/rl-scheduler/internal/worker/executor"
 	masterpb "github.com/pepelulka/rl-scheduler/proto/gen/go/v1/master"
 	workerpb "github.com/pepelulka/rl-scheduler/proto/gen/go/v1/worker"
@@ -15,6 +16,8 @@ import (
 )
 
 type WorkerService struct {
+	workerpb.UnimplementedWorkerServiceServer
+
 	e *executor.Executor
 
 	masterHost string
@@ -23,18 +26,26 @@ type WorkerService struct {
 
 	masterReportRetries      int
 	masterReportTimeInterval time.Duration
+
+	metricsSampler *workermetrics.Sampler
 }
 
 func NewService(
 	e *executor.Executor,
 	masterHost string,
+	stopCh <-chan struct{},
 ) *WorkerService {
+	sampler := &workermetrics.Sampler{}
+	go sampler.Run(stopCh)
+
 	return &WorkerService{
 		e:          e,
 		masterHost: masterHost,
 
 		masterReportRetries:      3,
 		masterReportTimeInterval: time.Second,
+
+		metricsSampler: sampler,
 	}
 }
 
@@ -43,6 +54,18 @@ func (s *WorkerService) GetStatus(ctx context.Context, req *workerpb.GetStatusRe
 	return &workerpb.GetStatusResponse{
 		Busy:        n > 0,
 		ActiveTasks: n,
+	}, nil
+}
+
+func (s *WorkerService) GetMetrics(ctx context.Context, req *workerpb.GetMetricsRequest) (*workerpb.GetMetricsResponse, error) {
+	snap := s.metricsSampler.Latest()
+	return &workerpb.GetMetricsResponse{
+		Metrics: &workerpb.NodeMetrics{
+			CpuUtilPct:    snap.CpuUtilPct,
+			CpuLimitCores: snap.CpuLimitCores,
+			RamUsageKib:   snap.RamUsageKiB,
+			RamMaxKib:     snap.RamMaxKiB,
+		},
 	}, nil
 }
 

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/pepelulka/rl-scheduler/internal/common"
 	"github.com/pepelulka/rl-scheduler/internal/s3"
@@ -17,24 +20,32 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
-func setupService(ctx context.Context, cfg Config) (*service.WorkerService, error) {
+func setupService(ctx context.Context, cfg Config, stopCh <-chan struct{}) (*service.WorkerService, error) {
 	s3Cli, err := s3.NewClient(ctx, cfg.S3Config)
 	if err != nil {
 		return nil, err
 	}
 	e := executor.NewExecutor(s3Cli)
 
-	return service.NewService(e, cfg.Master), nil
+	return service.NewService(e, cfg.Master, stopCh), nil
 }
 
 func main() {
 	cfg := common.MustParseConfigOpt[Config]()
 
-	address := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
+	address := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	stopCh := make(chan struct{})
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		close(stopCh)
+	}()
 
 	grpcServer := grpc.NewServer()
 
@@ -43,7 +54,7 @@ func main() {
 
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthSrv)
 
-	service, err := setupService(context.Background(), cfg)
+	service, err := setupService(context.Background(), cfg, stopCh)
 
 	workerpb.RegisterWorkerServiceServer(grpcServer, service)
 

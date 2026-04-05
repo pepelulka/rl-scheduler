@@ -1,0 +1,10 @@
+FROM golang:1.24-alpine AS builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o worker ./cmd/worker
+
+FROM python:3.12-slim
+COPY --from=builder /build/worker /usr/local/bin/worker
+ENTRYPOINT ["worker"]

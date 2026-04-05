@@ -1,0 +1,30 @@
+services:
+  worker:
+    build:
+      context: ../cluster
+      dockerfile: Dockerfile.worker
+    command: ["--config", "/etc/worker/config.yaml"]
+    ports:
+      - "2001:2001"
+    volumes:
+      - ./worker.yaml:/etc/worker/config.yaml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  worker2:
+    build:
+      context: ../cluster
+      dockerfile: Dockerfile.worker
+    command: ["--config", "/etc/worker/config.yaml"]
+    ports:
+      - "2002:2002"
+    volumes:
+      - ./worker2.yaml:/etc/worker/config.yaml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 500M

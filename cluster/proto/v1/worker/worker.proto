@@ -8,6 +8,7 @@ import "google/protobuf/timestamp.proto";
 
 service WorkerService {
     rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+    rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
     rpc NewTask(NewTaskRequest) returns (NewTaskResponse);
 }
 
@@ -28,6 +29,19 @@ message GetStatusRequest {}
 message GetStatusResponse {
     bool busy = 1;
     int32 active_tasks = 2;
+}
+
+message NodeMetrics {
+    float cpu_util_pct    = 1; // CPU utilisation [0, 100]
+    float ram_usage_kib   = 2; // current memory usage
+    float ram_max_kib     = 3; // memory limit
+    float cpu_limit_cores = 4; // CPU quota in cores (0 = no limit)
+}
+
+message GetMetricsRequest {}
+
+message GetMetricsResponse {
+    NodeMetrics metrics = 1;
 }
 
 message NewTaskRequest {

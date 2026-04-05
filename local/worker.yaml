@@ -1,7 +1,7 @@
 port: 2001
-master: "localhost:2000"
+master: "host.docker.internal:2000"
 s3_config:
-  endpoint: "http://localhost:9000"
+  endpoint: "http://host.docker.internal:9000"
   login: "local"
   password: "12345678"
   bucket: "data"
