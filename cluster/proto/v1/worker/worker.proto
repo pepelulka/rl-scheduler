@@ -27,6 +27,7 @@ message GetStatusRequest {}
 
 message GetStatusResponse {
     bool busy = 1;
+    int32 active_tasks = 2;
 }
 
 message NewTaskRequest {

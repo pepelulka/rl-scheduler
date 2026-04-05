@@ -17,21 +17,21 @@ type PythonTask struct {
 func (e *Executor) ExecPythonTask(task PythonTask) error {
 	ctx := context.Background()
 
-	scriptFile, err := os.Create("script.py")
+	scriptFile, err := os.CreateTemp("", "script-*.py")
 	if err != nil {
 		return fmt.Errorf("create temp script: %w", err)
 	}
 	defer os.Remove(scriptFile.Name())
 	scriptFile.Close()
 
-	inputFile, err := os.Create("input.txt")
+	inputFile, err := os.CreateTemp("", "input-*")
 	if err != nil {
 		return fmt.Errorf("create temp input: %w", err)
 	}
 	defer os.Remove(inputFile.Name())
 	inputFile.Close()
 
-	outputFile, err := os.Create("output.txt")
+	outputFile, err := os.CreateTemp("", "output-*")
 	if err != nil {
 		return fmt.Errorf("create temp output: %w", err)
 	}

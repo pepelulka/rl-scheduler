@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pepelulka/rl-scheduler/internal/worker/executor"
@@ -19,9 +19,7 @@ type WorkerService struct {
 
 	masterHost string
 
-	mtx sync.Mutex
-
-	busy bool
+	activeTasks atomic.Int32
 
 	masterReportRetries      int
 	masterReportTimeInterval time.Duration
@@ -33,7 +31,6 @@ func NewService(
 ) *WorkerService {
 	return &WorkerService{
 		e:          e,
-		busy:       false,
 		masterHost: masterHost,
 
 		masterReportRetries:      3,
@@ -42,25 +39,15 @@ func NewService(
 }
 
 func (s *WorkerService) GetStatus(ctx context.Context, req *workerpb.GetStatusRequest) (*workerpb.GetStatusResponse, error) {
+	n := s.activeTasks.Load()
 	return &workerpb.GetStatusResponse{
-		Busy: s.busy,
+		Busy:        n > 0,
+		ActiveTasks: n,
 	}, nil
 }
 
 func (s *WorkerService) NewTask(ctx context.Context, req *workerpb.NewTaskRequest) (*workerpb.NewTaskResponse, error) {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	if s.busy {
-		return &workerpb.NewTaskResponse{
-			Accepted: false,
-			Error:    workerpb.NewTaskError_NEW_TASK_ERROR_WORKER_IS_BUSY,
-			ErrorMsg: "worker is busy",
-		}, nil
-	}
-
-	s.busy = true
-
+	s.activeTasks.Add(1)
 	go s.backgroundExecTask(context.Background(), req.TaskId, req.Task)
 
 	return &workerpb.NewTaskResponse{
@@ -103,15 +90,10 @@ func (s *WorkerService) reportToMaster(ctx context.Context, taskId string, succe
 }
 
 func (s *WorkerService) backgroundExecTask(ctx context.Context, taskId string, task *workerpb.Task) {
+	defer s.activeTasks.Add(-1)
 	defer func() {
 		if r := recover(); r != nil {
-			s.reportToMaster(
-				ctx,
-				taskId,
-				false,
-				"recovered from panic",
-			)
-			s.busy = false
+			s.reportToMaster(ctx, taskId, false, "recovered from panic")
 		}
 	}()
 
@@ -138,5 +120,4 @@ func (s *WorkerService) backgroundExecTask(ctx context.Context, taskId string, t
 			fmt.Println("failed to report to master: %v", err)
 		}
 	}
-	s.busy = false
 }
