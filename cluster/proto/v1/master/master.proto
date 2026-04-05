@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package master.v1;
+
+option go_package = "github.com/pepelulka/rl-scheduler/proto/gen/go/master;masterpb";
+
+import "google/protobuf/timestamp.proto";
+
+service MasterService {
+    rpc ReportTaskResult(ReportTaskResultRequest) returns (ReportTaskResultResponse);
+}
+
+enum TaskResultType {
+    TASK_RESULT_TYPE_UNSPECIFIED = 0;
+    TASK_RESULT_TYPE_SUCCESS = 1;
+    TASK_RESULT_TYPE_FAIL = 2;
+}
+
+message ReportTaskResultRequest {
+    string task_id = 1;
+    TaskResultType type = 2;
+    string error = 3;
+}
+
+message ReportTaskResultResponse {}

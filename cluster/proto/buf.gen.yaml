@@ -1,0 +1,14 @@
+version: v1
+plugins:
+  # базовые Go структуры
+  - plugin: go
+    out: gen/go
+    opt:
+      - paths=source_relative
+
+  # gRPC сервисы
+  - plugin: go-grpc
+    out: gen/go
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=false

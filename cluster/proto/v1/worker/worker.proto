@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package worker.v1;
+
+option go_package = "github.com/pepelulka/rl-scheduler/proto/gen/go/worker;workerpb";
+
+import "google/protobuf/timestamp.proto";
+
+service WorkerService {
+    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+    rpc NewTask(NewTaskRequest) returns (NewTaskResponse);
+}
+
+enum TaskType {
+    TASK_TYPE_UNSPECIFIED = 0;
+    TASK_TYPE_PYTHON = 1;
+}
+
+message Task {
+    TaskType type = 1;
+    string input_file = 2;
+    string output_file = 3;
+    string script = 4;
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+    bool busy = 1;
+}
+
+message NewTaskRequest {
+    string task_id = 1;
+    Task task = 2;
+}
+
+enum NewTaskError {
+    NEW_TASK_ERROR_UNSPECIFIED = 0;
+    NEW_TASK_ERROR_WORKER_IS_BUSY = 1;
+}
+
+message NewTaskResponse {
+    bool accepted = 1;
+    NewTaskError error = 2;
+    string error_msg = 3;
+}

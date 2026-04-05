@@ -1,0 +1,3 @@
+port: 2000
+workers:
+  - host: "localhost:2001"
