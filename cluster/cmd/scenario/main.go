@@ -1,5 +1,5 @@
 // Тестовый сценарий: загружает скрипт и входные данные в S3,
-// отправляет задачи на мастер, ждёт результатов в S3 и проверяет их.
+// отправляет задачи на мастер, ждёт завершения через GetTaskStatus и проверяет результаты.
 //
 // Скрипт читает из stdin целое число и выводит его квадрат.
 // Входные данные: 1, 2, 3, ... N. Ожидаемые результаты: 1, 4, 9, ... N².
@@ -109,36 +109,38 @@ func main() {
 		fmt.Printf("  submitted task[%d] → id=%s  input=%d\n", i, resp.TaskId, inputs[i])
 	}
 
-	// ── 4. Ожидание и проверка результатов ────────────────────────────────────
+	// ── 4. Ожидание завершения через GetTaskStatus ────────────────────────────
 	fmt.Printf("\nwaiting for results (timeout %s)…\n", *timeout)
 
-	done    := make([]bool, *n)
-	failed  := make([]string, *n)
+	type result struct {
+		done   bool
+		errMsg string // пусто — успех
+	}
+	results  := make([]result, *n)
 	deadline := time.Now().Add(*timeout)
 
 	for time.Now().Before(deadline) {
 		allDone := true
 		for i := range *n {
-			if done[i] {
+			if results[i].done {
 				continue
 			}
 			allDone = false
 
-			content, err := readS3File(ctx, s3Cli, outputKeys[i])
+			statusResp, err := masterCli.GetTaskStatus(ctx, &masterpb.GetTaskStatusRequest{
+				TaskId: taskIDs[i],
+			})
 			if err != nil {
-				// Файл ещё не появился — нормально.
 				continue
 			}
 
-			got, parseErr := strconv.Atoi(strings.TrimSpace(content))
-			want := inputs[i] * inputs[i]
-
-			if parseErr != nil {
-				failed[i] = fmt.Sprintf("bad output %q: %v", content, parseErr)
-			} else if got != want {
-				failed[i] = fmt.Sprintf("got %d, want %d", got, want)
+			switch statusResp.Status {
+			case masterpb.TaskStatus_TASK_STATUS_SUCCESS:
+				results[i].done = true
+			case masterpb.TaskStatus_TASK_STATUS_FAIL:
+				results[i].done = true
+				results[i].errMsg = fmt.Sprintf("worker error: %s", statusResp.Error)
 			}
-			done[i] = true
 		}
 		if allDone {
 			break
@@ -146,12 +148,33 @@ func main() {
 		time.Sleep(time.Second)
 	}
 
-	// ── 5. Итоги ──────────────────────────────────────────────────────────────
+	// ── 5. Проверка результатов из S3 для успешных задач ─────────────────────
+	failed := make([]string, *n)
+	for i := range *n {
+		if !results[i].done || results[i].errMsg != "" {
+			failed[i] = results[i].errMsg
+			continue
+		}
+		content, err := readS3File(ctx, s3Cli, outputKeys[i])
+		if err != nil {
+			failed[i] = fmt.Sprintf("s3 read: %v", err)
+			continue
+		}
+		got, parseErr := strconv.Atoi(strings.TrimSpace(content))
+		want := inputs[i] * inputs[i]
+		if parseErr != nil {
+			failed[i] = fmt.Sprintf("bad output %q: %v", content, parseErr)
+		} else if got != want {
+			failed[i] = fmt.Sprintf("got %d, want %d", got, want)
+		}
+	}
+
+	// ── 6. Итоги ──────────────────────────────────────────────────────────────
 	fmt.Println()
 	passed, errCount, pending := 0, 0, 0
 	for i := range *n {
 		switch {
-		case !done[i]:
+		case !results[i].done:
 			fmt.Printf("  [TIMEOUT] task[%d] id=%s  input=%d\n", i, taskIDs[i], inputs[i])
 			pending++
 		case failed[i] != "":

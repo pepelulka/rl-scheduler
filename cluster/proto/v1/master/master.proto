@@ -9,6 +9,7 @@ import "google/protobuf/timestamp.proto";
 service MasterService {
     rpc ReportTaskResult(ReportTaskResultRequest) returns (ReportTaskResultResponse);
     rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
+    rpc GetTaskStatus(GetTaskStatusRequest) returns (GetTaskStatusResponse);
 }
 
 enum TaskResultType {
@@ -38,4 +39,22 @@ message SubmitTaskRequest {
 
 message SubmitTaskResponse {
     string task_id = 1;
+}
+
+enum TaskStatus {
+    TASK_STATUS_UNSPECIFIED = 0;
+    TASK_STATUS_QUEUED      = 1;
+    TASK_STATUS_RUNNING     = 2;
+    TASK_STATUS_SUCCESS     = 3;
+    TASK_STATUS_FAIL        = 4;
+}
+
+message GetTaskStatusRequest {
+    string task_id = 1;
+}
+
+message GetTaskStatusResponse {
+    string task_id     = 1;
+    TaskStatus status  = 2;
+    string error       = 3; // заполнено при TASK_STATUS_FAIL
 }
