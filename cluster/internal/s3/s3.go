@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type Config struct {
@@ -58,6 +59,33 @@ func (c *Client) Upload(ctx context.Context, key string, body io.Reader) error {
 	})
 	if err != nil {
 		return fmt.Errorf("upload %q: %w", key, err)
+	}
+	return nil
+}
+
+// DeleteMany удаляет объекты keys из бакета одним batch-запросом.
+// Ошибки отдельных объектов накапливаются и возвращаются вместе.
+func (c *Client) DeleteMany(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	objects := make([]types.ObjectIdentifier, len(keys))
+	for i, k := range keys {
+		objects[i] = types.ObjectIdentifier{Key: aws.String(k)}
+	}
+	out, err := c.s3.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		Bucket: aws.String(c.bucket),
+		Delete: &types.Delete{Objects: objects, Quiet: aws.Bool(true)},
+	})
+	if err != nil {
+		return fmt.Errorf("delete objects: %w", err)
+	}
+	if len(out.Errors) > 0 {
+		var msgs []string
+		for _, e := range out.Errors {
+			msgs = append(msgs, fmt.Sprintf("%s: %s", aws.ToString(e.Key), aws.ToString(e.Message)))
+		}
+		return fmt.Errorf("partial delete errors: %v", msgs)
 	}
 	return nil
 }
