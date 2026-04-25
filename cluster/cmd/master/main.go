@@ -58,7 +58,7 @@ func main() {
 	masterService := service.NewMasterService(workers, metricsCollector, sched, nil)
 	go masterService.Run(ctx)
 
-	address := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
+	address := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatal(err)

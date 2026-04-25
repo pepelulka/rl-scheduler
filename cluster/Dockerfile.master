@@ -1,0 +1,10 @@
+FROM golang:1.24-alpine AS builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o master ./cmd/master
+
+FROM alpine:3.21
+COPY --from=builder /build/master /usr/local/bin/master
+ENTRYPOINT ["master"]

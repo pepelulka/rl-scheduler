@@ -14,9 +14,7 @@ type PythonTask struct {
 	ScriptPath string `yaml:"script_path"`
 }
 
-func (e *Executor) ExecPythonTask(task PythonTask) error {
-	ctx := context.Background()
-
+func (e *Executor) ExecPythonTask(ctx context.Context, task PythonTask) error {
 	scriptFile, err := os.CreateTemp("", "script-*.py")
 	if err != nil {
 		return fmt.Errorf("create temp script: %w", err)

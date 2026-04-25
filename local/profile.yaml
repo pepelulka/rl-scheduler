@@ -1,0 +1,33 @@
+master: "localhost:2000"
+
+s3:
+  endpoint: "http://localhost:9000"
+  login: "local"
+  password: "12345678"
+  bucket: "data"
+
+resources_dir: "../local/resources"
+
+workers:
+  - "localhost:2001"
+  - "localhost:2002"
+  - "localhost:2003"
+  - "localhost:2004"
+  - "localhost:2005"
+  - "localhost:2006"
+
+tasks:
+  - type: monte_carlo
+    sizes: [20000000, 40000000, 60000000]   # O(N)
+    repeats: 3
+
+  - type: mat_mul
+    sizes: [400, 800, 1000]               # N×N матрица: (O(N³))
+    repeats: 3
+
+  - type: prime_sieve
+    sizes: [50000000, 100000000, 200000000] # O(N log log N)
+    repeats: 3
+
+timeout: "30m"
+output_csv: "profile_results.csv"

@@ -1,5 +1,41 @@
 services:
-  worker:
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: local
+      MINIO_ROOT_PASSWORD: "12345678"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  master:
+    build:
+      context: ../cluster
+      dockerfile: Dockerfile.master
+    command: ["--config", "/etc/master/config.yaml"]
+    ports:
+      - "2000:2000"
+    volumes:
+      - ./master.yaml:/etc/master/config.yaml:ro
+    depends_on:
+      - worker1
+      - worker2
+      - worker3
+      - worker4
+      - worker5
+      - worker6
+
+  worker1:
     build:
       context: ../cluster
       dockerfile: Dockerfile.worker
@@ -7,12 +43,15 @@ services:
     ports:
       - "2001:2001"
     volumes:
-      - ./worker.yaml:/etc/worker/config.yaml:ro
+      - ./workers/worker1.yaml:/etc/worker/config.yaml:ro
+    depends_on:
+      minio:
+        condition: service_healthy
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 1G
+          cpus: "0.3"
+          memory: 300M
 
   worker2:
     build:
@@ -22,9 +61,88 @@ services:
     ports:
       - "2002:2002"
     volumes:
-      - ./worker2.yaml:/etc/worker/config.yaml:ro
+      - ./workers/worker2.yaml:/etc/worker/config.yaml:ro
+    depends_on:
+      minio:
+        condition: service_healthy
     deploy:
       resources:
         limits:
           cpus: "0.5"
           memory: 500M
+
+  worker3:
+    build:
+      context: ../cluster
+      dockerfile: Dockerfile.worker
+    command: ["--config", "/etc/worker/config.yaml"]
+    ports:
+      - "2003:2003"
+    volumes:
+      - ./workers/worker3.yaml:/etc/worker/config.yaml:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.8"
+          memory: 800M
+
+  worker4:
+    build:
+      context: ../cluster
+      dockerfile: Dockerfile.worker
+    command: ["--config", "/etc/worker/config.yaml"]
+    ports:
+      - "2004:2004"
+    volumes:
+      - ./workers/worker4.yaml:/etc/worker/config.yaml:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  worker5:
+    build:
+      context: ../cluster
+      dockerfile: Dockerfile.worker
+    command: ["--config", "/etc/worker/config.yaml"]
+    ports:
+      - "2005:2005"
+    volumes:
+      - ./workers/worker5.yaml:/etc/worker/config.yaml:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1536M
+
+  worker6:
+    build:
+      context: ../cluster
+      dockerfile: Dockerfile.worker
+    command: ["--config", "/etc/worker/config.yaml"]
+    ports:
+      - "2006:2006"
+    volumes:
+      - ./workers/worker6.yaml:/etc/worker/config.yaml:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+volumes:
+  minio_data:
+    driver: local

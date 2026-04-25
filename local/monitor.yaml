@@ -1,0 +1,8 @@
+poll_interval: "1s"
+workers:
+  - host: "localhost:2001"
+  - host: "localhost:2002"
+  - host: "localhost:2003"
+  - host: "localhost:2004"
+  - host: "localhost:2005"
+  - host: "localhost:2006"

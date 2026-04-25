@@ -1,4 +1,8 @@
 port: 2000
 workers:
-  - host: "localhost:2001"
-  - host: "localhost:2002"
+  - host: "worker1:2001"
+  - host: "worker2:2002"
+  - host: "worker3:2003"
+  - host: "worker4:2004"
+  - host: "worker5:2005"
+  - host: "worker6:2006"

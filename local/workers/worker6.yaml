@@ -1,0 +1,7 @@
+port: 2006
+master: "master:2000"
+s3_config:
+  endpoint: "http://minio:9000"
+  login: "local"
+  password: "12345678"
+  bucket: "data"

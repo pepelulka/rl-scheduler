@@ -20,9 +20,21 @@ import (
 )
 
 const (
-	taskQueueSize   = 1024
-	dispatchRetry   = 500 * time.Millisecond
+	taskQueueSize     = 1024
+	dispatchRetry     = 500 * time.Millisecond
 	workerCallTimeout = 5 * time.Second
+
+	// Ключи в метаданных задачи с особым смыслом для мастера.
+
+	// MetaKeyPinnedWorker — host:port воркера, на который должна быть назначена
+	// задача. Планировщик игнорируется; задача всё равно проходит через очередь,
+	// если не выставлен MetaKeyBypassQueue.
+	MetaKeyPinnedWorker = "pinned_worker"
+
+	// MetaKeyBypassQueue — если "true", SubmitTask синхронно отправляет задачу
+	// напрямую воркеру из MetaKeyPinnedWorker, минуя очередь.
+	// Требует MetaKeyPinnedWorker.
+	MetaKeyBypassQueue = "bypass_queue"
 )
 
 // queuedTask — задача, ожидающая размещения на воркере.
@@ -46,8 +58,8 @@ type MasterService struct {
 	sched     scheduler.Scheduler
 	taskQueue chan queuedTask
 
-	mu      sync.RWMutex
-	tasks   map[string]*taskRecord
+	mu    sync.RWMutex
+	tasks map[string]*taskRecord
 
 	// clusterMeta — произвольная метаинформация уровня кластера,
 	// передаётся планировщику при каждом вызове Schedule.
@@ -111,10 +123,18 @@ func (s *MasterService) GetTaskStatus(_ context.Context, req *masterpb.GetTaskSt
 	}, nil
 }
 
-func (s *MasterService) SubmitTask(_ context.Context, req *masterpb.SubmitTaskRequest) (*masterpb.SubmitTaskResponse, error) {
+func (s *MasterService) SubmitTask(ctx context.Context, req *masterpb.SubmitTaskRequest) (*masterpb.SubmitTaskResponse, error) {
 	taskType := taskTypeFromString(req.Type)
 	if taskType == workerpb.TaskType_TASK_TYPE_UNSPECIFIED {
 		return nil, fmt.Errorf("unknown task type: %q", req.Type)
+	}
+
+	pinnedHost := req.Meta[MetaKeyPinnedWorker]
+	bypassQueue := req.Meta[MetaKeyBypassQueue] == "true"
+
+	if bypassQueue && pinnedHost == "" {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"%q требует указания %q", MetaKeyBypassQueue, MetaKeyPinnedWorker)
 	}
 
 	task := queuedTask{
@@ -129,6 +149,18 @@ func (s *MasterService) SubmitTask(_ context.Context, req *masterpb.SubmitTaskRe
 	}
 
 	s.setTaskStatus(task.id, masterpb.TaskStatus_TASK_STATUS_QUEUED, "")
+
+	if bypassQueue {
+		// Синхронная отправка в обход очереди: клиент блокируется до размещения.
+		if err := s.placeTaskOnHost(ctx, task, pinnedHost); err != nil {
+			s.mu.Lock()
+			delete(s.tasks, task.id)
+			s.mu.Unlock()
+			return nil, status.Errorf(codes.Unavailable, "не удалось разместить задачу на %s: %v", pinnedHost, err)
+		}
+		return &masterpb.SubmitTaskResponse{TaskId: task.id}, nil
+	}
+
 	select {
 	case s.taskQueue <- task:
 		return &masterpb.SubmitTaskResponse{TaskId: task.id}, nil
@@ -153,9 +185,14 @@ func (s *MasterService) dispatch(ctx context.Context) {
 	}
 }
 
-// placeTask пытается разместить задачу на воркере.
-// При Wait-решении планировщика делает паузу и повторяет попытку.
+// placeTask размещает задачу на воркере.
+// Если в метаданных указан pinned_worker — планировщик пропускается.
 func (s *MasterService) placeTask(ctx context.Context, task queuedTask) {
+	if pinnedHost := task.meta[MetaKeyPinnedWorker]; pinnedHost != "" {
+		s.placeTaskOnHost(ctx, task, pinnedHost)
+		return
+	}
+
 	info := scheduler.TaskInfo{
 		ID:   task.id,
 		Type: task.pbTask.Type.String(),
@@ -181,7 +218,6 @@ func (s *MasterService) placeTask(ctx context.Context, task queuedTask) {
 		if err := s.sendToWorker(ctx, decision.WorkerHost, task); err != nil {
 			log.Printf("failed to send task %s to %s: %v", task.id, decision.WorkerHost, err)
 			s.setTaskStatus(task.id, masterpb.TaskStatus_TASK_STATUS_QUEUED, "")
-			// Воркер недоступен — ждём и повторяем через планировщик.
 			select {
 			case <-ctx.Done():
 				return
@@ -190,6 +226,24 @@ func (s *MasterService) placeTask(ctx context.Context, task queuedTask) {
 			}
 		}
 		return
+	}
+}
+
+// placeTaskOnHost отправляет задачу на конкретный воркер.
+// Возвращает ошибку только если ctx отменён; при недоступности воркера — повторяет.
+func (s *MasterService) placeTaskOnHost(ctx context.Context, task queuedTask, host string) error {
+	for {
+		if err := s.sendToWorker(ctx, host, task); err != nil {
+			log.Printf("failed to send task %s to pinned worker %s: %v", task.id, host, err)
+			s.setTaskStatus(task.id, masterpb.TaskStatus_TASK_STATUS_QUEUED, "")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(dispatchRetry):
+				continue
+			}
+		}
+		return nil
 	}
 }
 

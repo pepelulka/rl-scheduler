@@ -10,6 +10,7 @@ service WorkerService {
     rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
     rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
     rpc NewTask(NewTaskRequest) returns (NewTaskResponse);
+    rpc CancelAllTasks(CancelAllTasksRequest) returns (CancelAllTasksResponse);
 }
 
 enum TaskType {
@@ -58,4 +59,10 @@ message NewTaskResponse {
     bool accepted = 1;
     NewTaskError error = 2;
     string error_msg = 3;
+}
+
+message CancelAllTasksRequest {}
+
+message CancelAllTasksResponse {
+    int32 cancelled_count = 1;
 }
