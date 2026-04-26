@@ -106,6 +106,12 @@ func (s *MasterService) ReportTaskResult(_ context.Context, req *masterpb.Report
 	default:
 		log.Printf("task %s: unknown result type", req.TaskId)
 	}
+
+	if handler, ok := s.sched.(scheduler.TaskResultHandler); ok {
+		success := req.Type == masterpb.TaskResultType_TASK_RESULT_TYPE_SUCCESS
+		handler.OnTaskResult(req.TaskId, success, len(s.taskQueue))
+	}
+
 	return &masterpb.ReportTaskResultResponse{}, nil
 }
 
@@ -267,7 +273,7 @@ func (s *MasterService) collectClusterState(ctx context.Context) scheduler.Clust
 
 		workers = append(workers, ws)
 	}
-	return scheduler.ClusterState{Workers: workers, Meta: s.clusterMeta}
+	return scheduler.ClusterState{Workers: workers, QueueSize: len(s.taskQueue), Meta: s.clusterMeta}
 }
 
 func (s *MasterService) sendToWorker(ctx context.Context, host string, task queuedTask) error {

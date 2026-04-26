@@ -6,3 +6,9 @@ workers:
   - host: "worker4:2004"
   - host: "worker5:2005"
   - host: "worker6:2006"
+
+# Выбор планировщика: "least_loaded" (по умолчанию) или "rl"
+scheduler: least_loaded
+
+# URL inference-сервиса (нужен только при scheduler: rl)
+inference_url: http://host.docker.internal:8000

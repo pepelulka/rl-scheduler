@@ -54,7 +54,20 @@ func main() {
 	metricsCollector := mastermetrics.NewMetricsCollector(workers, pollInterval)
 	go metricsCollector.Run(ctx)
 
-	sched := scheduler.NewLeastLoadedScheduler(maxTasks)
+	var sched scheduler.Scheduler
+	switch cfg.Scheduler {
+	case "rl":
+		inferURL := cfg.InferenceURL
+		if inferURL == "" {
+			inferURL = "http://localhost:8000"
+		}
+		sched = scheduler.NewRLScheduler(inferURL, maxTasks)
+		log.Printf("Using RL scheduler, inference URL: %s", inferURL)
+	default:
+		sched = scheduler.NewLeastLoadedScheduler(maxTasks)
+		log.Println("Using LeastLoaded scheduler")
+	}
+
 	masterService := service.NewMasterService(workers, metricsCollector, sched, nil)
 	go masterService.Run(ctx)
 

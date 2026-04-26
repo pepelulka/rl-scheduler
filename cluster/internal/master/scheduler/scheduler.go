@@ -16,8 +16,9 @@ type WorkerState struct {
 // ClusterState — снимок кластера, передаваемый планировщику.
 // Meta намеренно не типизирована: её структура произвольна и будет меняться.
 type ClusterState struct {
-	Workers []WorkerState
-	Meta    map[string]string
+	Workers   []WorkerState
+	QueueSize int // число задач, ожидающих размещения в очереди
+	Meta      map[string]string
 }
 
 // TaskInfo — информация о задаче, которую нужно разместить.
@@ -41,4 +42,11 @@ type Decision struct {
 // возвращает решение — на какой воркер отправить или ждать.
 type Scheduler interface {
 	Schedule(ctx context.Context, cluster ClusterState, task TaskInfo) (Decision, error)
+}
+
+// TaskResultHandler — опциональный интерфейс для планировщиков,
+// поддерживающих онлайн-обучение по результатам выполнения задач.
+// MasterService вызывает OnTaskResult после каждого ReportTaskResult.
+type TaskResultHandler interface {
+	OnTaskResult(taskID string, success bool, queueSize int)
 }

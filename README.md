@@ -34,10 +34,9 @@ cd rl-scheduler/rl
 python train.py
 ```
 
-
 ## Запуск сервиса инференса (после того как модель обучена)
 
 ```
 cd rl-scheduler/inference                                 
-  MODEL_PATH="../rl/models/best/best_model.zip" python -m uvicorn main:app --port 8000
+MODEL_PATH="../rl/models/best/best_model.zip" python -m uvicorn main:app --port 8000 --host "0.0.0.0"
 ```

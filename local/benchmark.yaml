@@ -1,0 +1,91 @@
+master: "localhost:2000"
+
+s3:
+  endpoint: "http://localhost:9000"
+  login: "local"
+  password: "12345678"
+  bucket: "data"
+
+resources_dir: "../local/resources"
+
+timeout: "15m"          # таймаут на каждый сценарий
+cooldown_between: "5s"  # пауза между сценариями (даём кластеру успокоиться)
+
+output_csv: "benchmark_results.csv"
+
+scenarios:
+  # ── Однотипные задачи ────────────────────────────────────────────────────────
+
+  - name: "monte_carlo_light"
+    tasks:
+      - type: monte_carlo
+        size: 2000000   # ~лёгкая
+        count: 6
+
+  - name: "monte_carlo_heavy"
+    tasks:
+      - type: monte_carlo
+        size: 6000000   # ~тяжёлая
+        count: 6
+
+  - name: "mat_mul_light"
+    tasks:
+      - type: mat_mul
+        size: 100       # 100×100, O(N³)
+        count: 6
+
+  - name: "mat_mul_heavy"
+    tasks:
+      - type: mat_mul
+        size: 200       # 200×200
+        count: 6
+
+  - name: "prime_sieve_light"
+    tasks:
+      - type: prime_sieve
+        size: 5000000
+        count: 6
+
+  - name: "prime_sieve_heavy"
+    tasks:
+      - type: prime_sieve
+        size: 20000000
+        count: 6
+
+  # ── Смешанные сценарии ───────────────────────────────────────────────────────
+
+  - name: "mixed_uniform"
+    tasks:
+      - type: monte_carlo
+        size: 4000000
+        count: 2
+      - type: mat_mul
+        size: 150
+        count: 2
+      - type: prime_sieve
+        size: 10000000
+        count: 2
+
+  - name: "mixed_heavy"
+    tasks:
+      - type: monte_carlo
+        size: 6000000
+        count: 2
+      - type: mat_mul
+        size: 200
+        count: 2
+      - type: prime_sieve
+        size: 20000000
+        count: 2
+
+  - name: "mixed_asymmetric"
+    tasks:
+      - type: monte_carlo
+        size: 4000000
+        count: 3      # больше лёгких
+      - type: mat_mul
+        size: 200
+        count: 1      # одна тяжёлая
+      - type: prime_sieve
+        size: 10000000
+        count: 2

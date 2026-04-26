@@ -1,0 +1,23 @@
+master: "localhost:2000"
+
+s3:
+  endpoint: "http://localhost:9000"
+  login: "local"
+  password: "12345678"
+  bucket: "data"
+
+resources_dir: "../local/resources"
+
+# Максимальное число задач «в полёте» (QUEUED + RUNNING).
+# Loader не отправит новую задачу, пока это число не упадёт ниже порога.
+max_queue_size: 10
+
+tasks:
+  - type: monte_carlo
+    sizes: [2000000, 4000000, 6000000]   # O(N)
+
+  - type: mat_mul
+    sizes: [100, 150, 200]               # N×N матрица O(N³)
+
+  - type: prime_sieve
+    sizes: [5000000, 10000000, 20000000] # O(N log log N)
