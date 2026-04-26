@@ -2,20 +2,32 @@ openapi: "3.1.0"
 
 info:
   title: RL Scheduler Inference
-  version: "1.0.0"
+  version: "2.0.0"
   description: |
-    Stateless HTTP service that runs the trained PPO scheduling policy.
+    PPO-based task scheduler with **online fine-tuning**.
 
-    Given a snapshot of the cluster state (six worker metrics and the head
-    of the task queue), the service builds the 45-float observation vector
-    expected by the model, calls `model.predict`, and returns the chosen
-    scheduling action.
+    ### Usage pattern
 
-    **Actions**
+    1. **POST /infer** — send current cluster state, receive a scheduling
+       action and a `request_id`.
+    2. Apply the action in the cluster, observe the reward and the next state.
+    3. **POST /feedback** — send `request_id`, reward, next state, and a
+       `done` flag. The service buffers the complete PPO transition.
+    4. Every `ONLINE_BATCH` transitions (default 256) a PPO gradient update
+       is automatically triggered. Call **GET /status** to monitor progress.
+
+    ### Actions
     | Value | Meaning |
     |-------|---------|
     | 0–5   | Assign the head-of-queue task to worker `action` |
     | 6     | Wait — do not assign anything this scheduling interval |
+
+    ### Reward signal (suggested)
+    | Event | Value |
+    |-------|-------|
+    | Task completed | +1 |
+    | Queue not empty | −0.02 × queue length |
+    | Assignment to full worker | −1 |
 
 servers:
   - url: http://localhost:8000
@@ -38,30 +50,44 @@ paths:
                     type: string
                     example: ok
 
+  /status:
+    get:
+      operationId: getStatus
+      summary: Online-learning state
+      description: Returns the number of buffered transitions, pending requests, and total PPO updates.
+      responses:
+        "200":
+          description: Current learning state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
   /infer:
     post:
       operationId: runInference
       summary: Run scheduling inference
       description: |
-        Accepts the current cluster state and returns the next scheduling
-        decision produced by the PPO policy.
+        Builds the 45-float observation vector from the supplied cluster state,
+        runs `policy.forward()` (stochastic, suitable for online learning), and
+        returns the chosen action together with a `request_id` that must be
+        passed to **/feedback**.
 
-        **Observation vector (45 floats, built internally)**
+        **Observation layout (45 floats)**
 
-        Workers section (6 × 4 = 24 values):
+        Workers section (6 × 4 = 24):
         ```
         active_tasks / max_tasks_per_worker
         cpu_util_pct / 100
         cpu_limit_cores / 2.0
         min(ram_usage_kib / ram_max_kib, 10.0)
         ```
-
-        Queue section (1 + 5 × 4 = 21 values):
+        Queue section (1 + 5 × 4 = 21):
         ```
         min(queue_size / 20, 10.0)
         per visible task (up to 5):
           type one-hot [is_monte_carlo, is_mat_mul, is_prime_sieve]
-          size_index / 2   (0.0 = small, 0.5 = medium, 1.0 = large)
+          size_index / 2   (0.0=small, 0.5=medium, 1.0=large)
         ```
       requestBody:
         required: true
@@ -72,42 +98,16 @@ paths:
             example:
               max_tasks_per_worker: 2
               workers:
-                - active_tasks: 1
-                  cpu_util_pct: 45.2
-                  cpu_limit_cores: 0.30
-                  ram_usage_kib: 51200
-                  ram_max_kib: 307200
-                - active_tasks: 0
-                  cpu_util_pct: 0.0
-                  cpu_limit_cores: 0.50
-                  ram_usage_kib: 0
-                  ram_max_kib: 512000
-                - active_tasks: 0
-                  cpu_util_pct: 0.0
-                  cpu_limit_cores: 0.80
-                  ram_usage_kib: 0
-                  ram_max_kib: 819200
-                - active_tasks: 0
-                  cpu_util_pct: 0.0
-                  cpu_limit_cores: 1.00
-                  ram_usage_kib: 0
-                  ram_max_kib: 1048576
-                - active_tasks: 0
-                  cpu_util_pct: 0.0
-                  cpu_limit_cores: 1.50
-                  ram_usage_kib: 0
-                  ram_max_kib: 1572864
-                - active_tasks: 0
-                  cpu_util_pct: 0.0
-                  cpu_limit_cores: 2.00
-                  ram_usage_kib: 0
-                  ram_max_kib: 2097152
+                - {active_tasks: 1, cpu_util_pct: 45.2, cpu_limit_cores: 0.30, ram_usage_kib: 51200,   ram_max_kib: 307200}
+                - {active_tasks: 0, cpu_util_pct:  0.0, cpu_limit_cores: 0.50, ram_usage_kib: 0,        ram_max_kib: 512000}
+                - {active_tasks: 0, cpu_util_pct:  0.0, cpu_limit_cores: 0.80, ram_usage_kib: 0,        ram_max_kib: 819200}
+                - {active_tasks: 0, cpu_util_pct:  0.0, cpu_limit_cores: 1.00, ram_usage_kib: 0,        ram_max_kib: 1048576}
+                - {active_tasks: 0, cpu_util_pct:  0.0, cpu_limit_cores: 1.50, ram_usage_kib: 0,        ram_max_kib: 1572864}
+                - {active_tasks: 0, cpu_util_pct:  0.0, cpu_limit_cores: 2.00, ram_usage_kib: 0,        ram_max_kib: 2097152}
               queue_size: 3
               queue_tasks:
-                - task_type: monte_carlo
-                  size_index: 1
-                - task_type: mat_mul
-                  size_index: 0
+                - {task_type: monte_carlo, size_index: 1}
+                - {task_type: mat_mul,     size_index: 0}
       responses:
         "200":
           description: Scheduling decision
@@ -117,21 +117,75 @@ paths:
                 $ref: "#/components/schemas/InferResponse"
               examples:
                 assign:
-                  summary: Assign to worker 1
+                  summary: Assign to worker 5
                   value:
-                    action: 1
+                    request_id: "550e8400-e29b-41d4-a716-446655440000"
+                    action: 5
                     action_type: assign
-                    worker_index: 1
-                    description: "Assign head-of-queue task to worker 1"
+                    worker_index: 5
+                    description: "Assign head-of-queue task to worker 5"
                 wait:
                   summary: Wait this interval
                   value:
+                    request_id: "550e8400-e29b-41d4-a716-446655440001"
                     action: 6
                     action_type: wait
                     worker_index: null
                     description: "Wait — no assignment this scheduling interval"
         "422":
-          description: Validation error (wrong number of workers, unknown task type, etc.)
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorDetail"
+
+  /feedback:
+    post:
+      operationId: sendFeedback
+      summary: Report reward and trigger learning
+      description: |
+        Completes the transition started by **/infer** and adds it to the
+        PPO rollout buffer. When the buffer reaches `ONLINE_BATCH` entries a
+        PPO gradient update is triggered automatically.
+
+        `done: true` signals an episode boundary — the next inference will
+        be marked as `episode_start` for correct advantage computation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackRequest"
+            example:
+              request_id: "550e8400-e29b-41d4-a716-446655440000"
+              reward: 0.9
+              done: false
+              next_max_tasks_per_worker: 2
+              next_workers:
+                - {active_tasks: 0, cpu_util_pct: 0.0, cpu_limit_cores: 0.30, ram_usage_kib: 0,   ram_max_kib: 307200}
+                - {active_tasks: 0, cpu_util_pct: 0.0, cpu_limit_cores: 0.50, ram_usage_kib: 0,   ram_max_kib: 512000}
+                - {active_tasks: 0, cpu_util_pct: 0.0, cpu_limit_cores: 0.80, ram_usage_kib: 0,   ram_max_kib: 819200}
+                - {active_tasks: 0, cpu_util_pct: 0.0, cpu_limit_cores: 1.00, ram_usage_kib: 0,   ram_max_kib: 1048576}
+                - {active_tasks: 0, cpu_util_pct: 0.0, cpu_limit_cores: 1.50, ram_usage_kib: 0,   ram_max_kib: 1572864}
+                - {active_tasks: 1, cpu_util_pct: 35.0, cpu_limit_cores: 2.00, ram_usage_kib: 80000, ram_max_kib: 2097152}
+              next_queue_size: 2
+              next_queue_tasks:
+                - {task_type: mat_mul, size_index: 0}
+      responses:
+        "200":
+          description: Transition buffered (and possibly an update triggered)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackResponse"
+        "404":
+          description: request_id not found or already consumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorDetail"
+        "422":
+          description: Validation error
           content:
             application/json:
               schema:
@@ -141,59 +195,44 @@ components:
   schemas:
     WorkerState:
       type: object
-      required:
-        - active_tasks
-        - cpu_util_pct
-        - cpu_limit_cores
-        - ram_usage_kib
-        - ram_max_kib
+      required: [active_tasks, cpu_util_pct, cpu_limit_cores, ram_usage_kib, ram_max_kib]
       properties:
         active_tasks:
           type: integer
           minimum: 0
-          description: Number of tasks currently running on this worker
         cpu_util_pct:
           type: number
           format: float
           minimum: 0.0
           maximum: 100.0
-          description: CPU utilisation, percent (0–100)
         cpu_limit_cores:
           type: number
           format: float
           exclusiveMinimum: 0.0
-          description: CPU limit allocated to this worker, in cores
         ram_usage_kib:
           type: number
           format: float
           minimum: 0.0
-          description: Current RAM usage in KiB
         ram_max_kib:
           type: number
           format: float
           exclusiveMinimum: 0.0
-          description: RAM limit for this worker in KiB
 
     TaskInfo:
       type: object
-      required:
-        - task_type
-        - size_index
+      required: [task_type, size_index]
       properties:
         task_type:
           type: string
           enum: [monte_carlo, mat_mul, prime_sieve]
-          description: Type of the task
         size_index:
           type: integer
           enum: [0, 1, 2]
-          description: "Task size category: 0=small, 1=medium, 2=large"
+          description: "0=small, 1=medium, 2=large"
 
     InferRequest:
       type: object
-      required:
-        - workers
-        - queue_size
+      required: [workers, queue_size]
       properties:
         workers:
           type: array
@@ -201,49 +240,101 @@ components:
             $ref: "#/components/schemas/WorkerState"
           minItems: 6
           maxItems: 6
-          description: State of all 6 workers, ordered by worker index (0–5)
         queue_size:
           type: integer
           minimum: 0
-          description: Total number of tasks in the scheduling queue
         queue_tasks:
           type: array
           items:
             $ref: "#/components/schemas/TaskInfo"
           maxItems: 5
           default: []
-          description: "First up to 5 tasks in the queue (head first). Remaining slots are padded with zeros by the service."
         max_tasks_per_worker:
           type: integer
           minimum: 1
           default: 2
-          description: Concurrency limit configured on the master (used for normalisation)
 
     InferResponse:
       type: object
-      required:
-        - action
-        - action_type
-        - description
+      required: [request_id, action, action_type, description]
       properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Pass this to /feedback to complete the transition
         action:
           type: integer
           minimum: 0
           maximum: 6
-          description: "Raw action index: 0–5 assign to worker N, 6 wait"
         action_type:
           type: string
           enum: [assign, wait]
-          description: High-level interpretation of the action
         worker_index:
           type: integer
           minimum: 0
           maximum: 5
           nullable: true
-          description: "Index of the target worker when action_type is 'assign'; null otherwise"
         description:
           type: string
-          description: Human-readable summary of the scheduling decision
+
+    FeedbackRequest:
+      type: object
+      required: [request_id, reward, next_workers, next_queue_size]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+        reward:
+          type: number
+          format: float
+        done:
+          type: boolean
+          default: false
+          description: True if this transition ends an episode
+        next_workers:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkerState"
+          minItems: 6
+          maxItems: 6
+        next_queue_size:
+          type: integer
+          minimum: 0
+        next_queue_tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskInfo"
+          maxItems: 5
+          default: []
+        next_max_tasks_per_worker:
+          type: integer
+          minimum: 1
+          default: 2
+
+    FeedbackResponse:
+      type: object
+      required: [buffered, updated, update_count]
+      properties:
+        buffered:
+          type: integer
+          description: Transitions accumulated since last PPO update
+        updated:
+          type: boolean
+          description: True if a PPO gradient update was triggered by this call
+        update_count:
+          type: integer
+          description: Total number of PPO updates performed so far
+
+    StatusResponse:
+      type: object
+      properties:
+        buffered:
+          type: integer
+        pending:
+          type: integer
+          description: Inferences awaiting a /feedback call
+        update_count:
+          type: integer
 
     ErrorDetail:
       type: object
