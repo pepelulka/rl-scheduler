@@ -36,5 +36,5 @@ tasks:
     repeats: 3
 
 timeout: "30m"
-output_csv: "profile_results.csv"
-parallel_pair: false
+output_csv: "profile_results_pairs.csv"
+parallel_pair: true

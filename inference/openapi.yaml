@@ -1,0 +1,256 @@
+openapi: "3.1.0"
+
+info:
+  title: RL Scheduler Inference
+  version: "1.0.0"
+  description: |
+    Stateless HTTP service that runs the trained PPO scheduling policy.
+
+    Given a snapshot of the cluster state (six worker metrics and the head
+    of the task queue), the service builds the 45-float observation vector
+    expected by the model, calls `model.predict`, and returns the chosen
+    scheduling action.
+
+    **Actions**
+    | Value | Meaning |
+    |-------|---------|
+    | 0–5   | Assign the head-of-queue task to worker `action` |
+    | 6     | Wait — do not assign anything this scheduling interval |
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /infer:
+    post:
+      operationId: runInference
+      summary: Run scheduling inference
+      description: |
+        Accepts the current cluster state and returns the next scheduling
+        decision produced by the PPO policy.
+
+        **Observation vector (45 floats, built internally)**
+
+        Workers section (6 × 4 = 24 values):
+        ```
+        active_tasks / max_tasks_per_worker
+        cpu_util_pct / 100
+        cpu_limit_cores / 2.0
+        min(ram_usage_kib / ram_max_kib, 10.0)
+        ```
+
+        Queue section (1 + 5 × 4 = 21 values):
+        ```
+        min(queue_size / 20, 10.0)
+        per visible task (up to 5):
+          type one-hot [is_monte_carlo, is_mat_mul, is_prime_sieve]
+          size_index / 2   (0.0 = small, 0.5 = medium, 1.0 = large)
+        ```
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InferRequest"
+            example:
+              max_tasks_per_worker: 2
+              workers:
+                - active_tasks: 1
+                  cpu_util_pct: 45.2
+                  cpu_limit_cores: 0.30
+                  ram_usage_kib: 51200
+                  ram_max_kib: 307200
+                - active_tasks: 0
+                  cpu_util_pct: 0.0
+                  cpu_limit_cores: 0.50
+                  ram_usage_kib: 0
+                  ram_max_kib: 512000
+                - active_tasks: 0
+                  cpu_util_pct: 0.0
+                  cpu_limit_cores: 0.80
+                  ram_usage_kib: 0
+                  ram_max_kib: 819200
+                - active_tasks: 0
+                  cpu_util_pct: 0.0
+                  cpu_limit_cores: 1.00
+                  ram_usage_kib: 0
+                  ram_max_kib: 1048576
+                - active_tasks: 0
+                  cpu_util_pct: 0.0
+                  cpu_limit_cores: 1.50
+                  ram_usage_kib: 0
+                  ram_max_kib: 1572864
+                - active_tasks: 0
+                  cpu_util_pct: 0.0
+                  cpu_limit_cores: 2.00
+                  ram_usage_kib: 0
+                  ram_max_kib: 2097152
+              queue_size: 3
+              queue_tasks:
+                - task_type: monte_carlo
+                  size_index: 1
+                - task_type: mat_mul
+                  size_index: 0
+      responses:
+        "200":
+          description: Scheduling decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferResponse"
+              examples:
+                assign:
+                  summary: Assign to worker 1
+                  value:
+                    action: 1
+                    action_type: assign
+                    worker_index: 1
+                    description: "Assign head-of-queue task to worker 1"
+                wait:
+                  summary: Wait this interval
+                  value:
+                    action: 6
+                    action_type: wait
+                    worker_index: null
+                    description: "Wait — no assignment this scheduling interval"
+        "422":
+          description: Validation error (wrong number of workers, unknown task type, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorDetail"
+
+components:
+  schemas:
+    WorkerState:
+      type: object
+      required:
+        - active_tasks
+        - cpu_util_pct
+        - cpu_limit_cores
+        - ram_usage_kib
+        - ram_max_kib
+      properties:
+        active_tasks:
+          type: integer
+          minimum: 0
+          description: Number of tasks currently running on this worker
+        cpu_util_pct:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 100.0
+          description: CPU utilisation, percent (0–100)
+        cpu_limit_cores:
+          type: number
+          format: float
+          exclusiveMinimum: 0.0
+          description: CPU limit allocated to this worker, in cores
+        ram_usage_kib:
+          type: number
+          format: float
+          minimum: 0.0
+          description: Current RAM usage in KiB
+        ram_max_kib:
+          type: number
+          format: float
+          exclusiveMinimum: 0.0
+          description: RAM limit for this worker in KiB
+
+    TaskInfo:
+      type: object
+      required:
+        - task_type
+        - size_index
+      properties:
+        task_type:
+          type: string
+          enum: [monte_carlo, mat_mul, prime_sieve]
+          description: Type of the task
+        size_index:
+          type: integer
+          enum: [0, 1, 2]
+          description: "Task size category: 0=small, 1=medium, 2=large"
+
+    InferRequest:
+      type: object
+      required:
+        - workers
+        - queue_size
+      properties:
+        workers:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkerState"
+          minItems: 6
+          maxItems: 6
+          description: State of all 6 workers, ordered by worker index (0–5)
+        queue_size:
+          type: integer
+          minimum: 0
+          description: Total number of tasks in the scheduling queue
+        queue_tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskInfo"
+          maxItems: 5
+          default: []
+          description: "First up to 5 tasks in the queue (head first). Remaining slots are padded with zeros by the service."
+        max_tasks_per_worker:
+          type: integer
+          minimum: 1
+          default: 2
+          description: Concurrency limit configured on the master (used for normalisation)
+
+    InferResponse:
+      type: object
+      required:
+        - action
+        - action_type
+        - description
+      properties:
+        action:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: "Raw action index: 0–5 assign to worker N, 6 wait"
+        action_type:
+          type: string
+          enum: [assign, wait]
+          description: High-level interpretation of the action
+        worker_index:
+          type: integer
+          minimum: 0
+          maximum: 5
+          nullable: true
+          description: "Index of the target worker when action_type is 'assign'; null otherwise"
+        description:
+          type: string
+          description: Human-readable summary of the scheduling decision
+
+    ErrorDetail:
+      type: object
+      properties:
+        detail:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object

@@ -1,6 +1,6 @@
 # rl-scheduler
 
-# Генерация го файлов из .proto
+## Генерация го файлов из .proto
 
 Предварительно надо установить утилиту `buf` и `protoc` для golang, на MacOS например вот так:
 
@@ -16,7 +16,28 @@ brew install protoc-gen-go-grpc
 buf generate
 ```
 
-# Запуск
+## Снятие замеров на кластере 
+```
+cd rl-scheduler/cluster
+go run ./cmd/profile --config ../local/profile.yaml        # Для единичных задач
+go run ./cmd/profile --config ../local/profile_pairs.yaml  # Для задач по две
+```
 
-1. Нужно запустить MinIO хранилище с помощью docker compose (директория storage). Так же нужно будет создать там бакет и указать его во всех конфигах.
+## Визуализация результатов
 
+Для визуализации результатов есть Jupyter Notebook `rl-scheduler/graph/analysis.ipynb`
+
+## Обучение модели на симуляции кластера (после снятия замеров на кластере)
+
+```
+cd rl-scheduler/rl
+python train.py
+```
+
+
+## Запуск сервиса инференса (после того как модель обучена)
+
+```
+cd rl-scheduler/inference                                 
+  MODEL_PATH="../rl/models/best/best_model.zip" python -m uvicorn main:app --port 8000
+```
