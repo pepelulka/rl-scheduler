@@ -311,6 +311,7 @@ class ClusterSchedulerEnv(gym.Env):
     def step(self, action: int):
         invalid_action = False
         assigned       = False
+        wait_when_assignable = False
 
         # Try to assign if action is a worker index and queue is non-empty
         if action < self.N_WORKERS and self._task_queue:
@@ -337,6 +338,12 @@ class ClusterSchedulerEnv(gym.Env):
             else:
                 # Agent tried to assign to a full worker
                 invalid_action = True
+        elif action == self.N_WORKERS and self._task_queue:
+            has_capacity = any(
+                len(worker["tasks"]) < self.max_tasks_per_worker
+                for worker in self._worker_state
+            )
+            wait_when_assignable = has_capacity
 
         # Advance simulation clock
         completion_reward = self._advance_time()
@@ -346,6 +353,8 @@ class ClusterSchedulerEnv(gym.Env):
         reward -= 0.02 * len(self._task_queue)               # latency penalty
         if invalid_action:
             reward -= 1.0                                    # penalty for bad action
+        if wait_when_assignable:
+            reward -= 0.5                                    # penalty for idling with free capacity
 
         # Termination: all tasks submitted and completed, queues empty
         all_submitted  = self._total_submitted >= self.episode_tasks
