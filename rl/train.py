@@ -19,6 +19,14 @@ import os
 from pathlib import Path
 from typing import Callable
 
+_HERE = Path(__file__).parent
+_LOCAL_CACHE_DIR = _HERE / ".cache"
+_LOCAL_MPL_DIR = _HERE / ".matplotlib"
+_LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+_LOCAL_MPL_DIR.mkdir(exist_ok=True)
+os.environ.setdefault("XDG_CACHE_HOME", str(_LOCAL_CACHE_DIR))
+os.environ.setdefault("MPLCONFIGDIR", str(_LOCAL_MPL_DIR))
+
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import (
@@ -32,13 +40,55 @@ from stable_baselines3.common.vec_env import VecEnv
 
 from cluster_env import ClusterSchedulerEnv
 
-# ------------------------------------------------------------------ #
-# Paths                                                               #
-# ------------------------------------------------------------------ #
-_HERE          = Path(__file__).parent
 PROFILE_CSV    = str(_HERE / "../cluster/profile_results.csv")
 PAIR_CSV       = str(_HERE / "../cluster/profile_results_pairs.csv")
 MODELS_DIR     = str(_HERE / "models")
+
+
+# ------------------------------------------------------------------ #
+# Plotting helpers                                                    #
+# ------------------------------------------------------------------ #
+def save_training_curve(
+    values: list[float],
+    output_path: str | Path,
+    title: str,
+    ylabel: str,
+    xlabel: str,
+    max_points: int | None = None,
+) -> None:
+    """Save a single training curve as a PNG file."""
+    if not values:
+        print(f"No data collected for {title.lower()}, skipping plot.")
+        return
+
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError(
+            "matplotlib is required to save training plots. "
+            "Install it in the training environment and rerun training."
+        ) from exc
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plot_values = np.asarray(values, dtype=float)
+    plot_x = np.arange(1, len(plot_values) + 1, dtype=float)
+    if max_points is not None and max_points > 0 and len(plot_values) > max_points:
+        index_chunks = np.array_split(np.arange(len(plot_values)), max_points)
+        plot_values = np.array([plot_values[idx].mean() for idx in index_chunks], dtype=float)
+        plot_x = np.array([plot_x[idx].mean() for idx in index_chunks], dtype=float)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(plot_x, plot_values, linewidth=1.8, marker="o", markersize=3)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved plot → {output_path}")
 
 
 # ------------------------------------------------------------------ #
@@ -79,6 +129,7 @@ class EpisodeStatsCallback(BaseCallback):
         self.log_freq    = log_freq
         self._ep_rewards: list[float] = []
         self._ep_lengths: list[int]   = []
+        self.reward_history: list[float] = []
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -87,6 +138,7 @@ class EpisodeStatsCallback(BaseCallback):
                 ep = info["episode"]
                 self._ep_rewards.append(ep["r"])
                 self._ep_lengths.append(ep["l"])
+                self.reward_history.append(float(ep["r"]))
 
         if self.n_calls % self.log_freq == 0 and self._ep_rewards:
             mean_r = np.mean(self._ep_rewards[-50:])
@@ -97,6 +149,20 @@ class EpisodeStatsCallback(BaseCallback):
                 f"ep_len_mean={mean_l:6.1f}"
             )
         return True
+
+
+class TrackingPPO(PPO):
+    """PPO variant that keeps loss history for post-training plots."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.loss_history: list[float] = []
+
+    def train(self) -> None:
+        super().train()
+        loss = self.logger.name_to_value.get("train/loss")
+        if loss is not None:
+            self.loss_history.append(float(loss))
 
 
 # ------------------------------------------------------------------ #
@@ -119,7 +185,7 @@ def train(
     eval_freq_steps: int   = 20_000,
     n_eval_episodes: int   = 10,
     checkpoint_freq: int   = 100_000,
-) -> PPO:
+) -> TrackingPPO:
     os.makedirs(save_dir, exist_ok=True)
 
     env_fn = make_env(episode_tasks=episode_tasks, task_arrival_rate=task_arrival_rate)
@@ -130,7 +196,7 @@ def train(
         n_envs=1,
     )
 
-    model = PPO(
+    model = TrackingPPO(
         policy            = "MlpPolicy",
         env               = train_env,
         learning_rate     = learning_rate,
@@ -146,8 +212,9 @@ def train(
         policy_kwargs     = dict(net_arch=[256, 256]),
     )
 
+    stats_callback = EpisodeStatsCallback(log_freq=10_000)
     callbacks = [
-        EpisodeStatsCallback(log_freq=10_000),
+        stats_callback,
         EvalCallback(
             eval_env,
             best_model_save_path = os.path.join(save_dir, "best"),
@@ -174,6 +241,22 @@ def train(
     final_path = os.path.join(save_dir, "final_model")
     model.save(final_path)
     print(f"Model saved → {final_path}.zip")
+
+    save_training_curve(
+        stats_callback.reward_history,
+        os.path.join(save_dir, "training_reward.png"),
+        title  = "Episode Reward During Training",
+        ylabel = "Reward",
+        xlabel = "Episode",
+        max_points = 100,
+    )
+    save_training_curve(
+        model.loss_history,
+        os.path.join(save_dir, "training_loss.png"),
+        title  = "PPO Loss During Training",
+        ylabel = "Loss",
+        xlabel = "Update",
+    )
 
     train_env.close()
     eval_env.close()
