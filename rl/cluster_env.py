@@ -194,6 +194,38 @@ class ClusterSchedulerEnv(gym.Env):
                 ram_total += self._ram_pair.get(key, self._ram_solo.get(key, 10_000.0))
         return cpu_total, ram_total
 
+    def _assignment_quality_reward(self, task: Dict, chosen_wid: int) -> float:
+        """
+        Dense shaping reward for choosing a good worker among currently feasible ones.
+
+        Returns a small value in [-0.2, +0.2]:
+        +0.2 for the best feasible worker,
+        -0.2 for the worst feasible worker,
+        ~0 when there is no meaningful choice.
+        """
+        feasible: List[Tuple[int, float]] = []
+        for wid in range(self.N_WORKERS):
+            tasks = self._worker_state[wid]["tasks"]
+            if len(tasks) >= self.max_tasks_per_worker:
+                continue
+            n_conc = len(tasks) + 1
+            duration = self._task_duration(wid, task["type"], task["size"], n_conc)
+            feasible.append((wid, duration))
+
+        if len(feasible) < 2:
+            return 0.0
+
+        durations = np.array([duration for _, duration in feasible], dtype=float)
+        best = float(durations.min())
+        worst = float(durations.max())
+        spread = worst - best
+        if spread <= 1e-9:
+            return 0.0
+
+        chosen_duration = next(duration for wid, duration in feasible if wid == chosen_wid)
+        normalized_quality = (worst - chosen_duration) / spread  # 1.0 best, 0.0 worst
+        return 0.4 * (normalized_quality - 0.5)
+
     # ------------------------------------------------------------------ #
     # Task generation                                                      #
     # ------------------------------------------------------------------ #
@@ -312,6 +344,7 @@ class ClusterSchedulerEnv(gym.Env):
         invalid_action = False
         assigned       = False
         wait_when_assignable = False
+        assignment_quality_reward = 0.0
 
         # Try to assign if action is a worker index and queue is non-empty
         if action < self.N_WORKERS and self._task_queue:
@@ -319,6 +352,8 @@ class ClusterSchedulerEnv(gym.Env):
             w   = self._worker_state[wid]
 
             if len(w["tasks"]) < self.max_tasks_per_worker:
+                task = self._task_queue[0]
+                assignment_quality_reward = self._assignment_quality_reward(task, wid)
                 task        = self._task_queue.pop(0)
                 n_conc      = len(w["tasks"]) + 1
                 duration    = self._task_duration(wid, task["type"], task["size"], n_conc)
@@ -351,6 +386,7 @@ class ClusterSchedulerEnv(gym.Env):
         # Reward components
         reward  = completion_reward                           # +1 per completed task
         reward -= 0.02 * len(self._task_queue)               # latency penalty
+        reward += assignment_quality_reward                  # dense signal for worker choice
         if invalid_action:
             reward -= 1.0                                    # penalty for bad action
         if wait_when_assignable:
