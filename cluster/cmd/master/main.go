@@ -63,6 +63,16 @@ func main() {
 		}
 		sched = scheduler.NewRLScheduler(inferURL, maxTasks)
 		log.Printf("Using RL scheduler, inference URL: %s", inferURL)
+	case "round_robin":
+		sched = scheduler.NewRoundRobinScheduler(maxTasks)
+		log.Println("Using RoundRobin scheduler")
+	case "resource_aware":
+		cpuWeight := cfg.ResourceAwareCPUWeight
+		if cpuWeight <= 0 || cpuWeight > 1 {
+			cpuWeight = 0.5
+		}
+		sched = scheduler.NewResourceAwareScheduler(maxTasks, cpuWeight)
+		log.Printf("Using ResourceAware scheduler, cpu_weight=%.2f", cpuWeight)
 	default:
 		sched = scheduler.NewLeastLoadedScheduler(maxTasks)
 		log.Println("Using LeastLoaded scheduler")
